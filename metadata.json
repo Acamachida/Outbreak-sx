@@ -1,0 +1,7 @@
+{
+  "name": "Copy of Outbreak: Sobrevivência Tática",
+  "description": "Este aplicativo requer acesso à sua localização para rastrear membros do esquadrão e infectados no radar tático durante a partida.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
