@@ -6,7 +6,7 @@ import { GameStats } from "../types";
 export const getEvaluation = async (stats: GameStats, isSuccess: boolean): Promise<string> => {
   try {
     // Initializing client inside the function to ensure it uses the latest API key from the environment.
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey: "AIzaSyCxEjKWBJVfMvb2TIs5RER1ve2VZbe4eoc" });
 
     const prompt = `
       Atue como um sobrevivente veterano e ranzinza chamado "VELHO REED" que está te orientando pelo rádio durante um apocalipse zumbi.
