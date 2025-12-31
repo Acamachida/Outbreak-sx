@@ -1,12 +1,11 @@
 
-
 import { GoogleGenAI } from "@google/genai";
 import { GameStats } from "../types";
 
 export const getEvaluation = async (stats: GameStats, isSuccess: boolean): Promise<string> => {
   try {
-    // Initializing client inside the function to ensure it uses the latest API key from the environment.
-    const ai = new GoogleGenAI({ apiKey: "AIzaSyCxEjKWBJVfMvb2TIs5RER1ve2VZbe4eoc" });
+    // Instancia o cliente usando a variável de ambiente segura
+    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY as string });
 
     const prompt = `
       Atue como um sobrevivente veterano e ranzinza chamado "VELHO REED" que está te orientando pelo rádio durante um apocalipse zumbi.
@@ -26,11 +25,10 @@ export const getEvaluation = async (stats: GameStats, isSuccess: boolean): Promi
       contents: prompt,
       config: {
         temperature: 0.8,
-        // Removed maxOutputTokens to rely on default model behavior and avoid thinking budget issues.
       }
     });
 
-    // Accessing .text property directly as per latest SDK guidelines.
+    // Retorna o texto gerado diretamente da propriedade .text
     return response.text || "O rádio está com muita interferência... mas parece que você não durou muito.";
   } catch (error) {
     console.error("Gemini Error:", error);

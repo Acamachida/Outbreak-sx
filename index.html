@@ -23,8 +23,6 @@
       margin: 0;
     }
 
-    /* Interface limpa sem texturas de scanlines ou CRT overlay */
-
     h1, h2, h3, .font-header {
       font-family: var(--font-header);
       letter-spacing: 0.1em;
@@ -72,5 +70,7 @@
 </head>
 <body>
   <div id="root"></div>
+  <!-- O script abaixo é essencial para carregar o código do jogo -->
+  <script type="module" src="index.tsx"></script>
 </body>
 </html>
