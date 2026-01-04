@@ -200,10 +200,8 @@ const App: React.FC = () => {
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
     };
     
-    // Mostra localmente
     setMessages(prev => [...prev, newMessage]);
     
-    // Transmite para os outros
     if (channelRef.current) {
       channelRef.current.send({ type: 'broadcast', event: 'chat_message', payload: newMessage });
     }
@@ -499,23 +497,36 @@ const App: React.FC = () => {
         )}
 
         {gameState === GameState.PLAYING && (
-          <div className="w-full max-xl space-y-6 relative">
+          <div className="w-full max-xl space-y-4 relative">
+             {/* BARRA DE PROGRESSO GLOBAL */}
+             <div className="w-full bg-[#111] border border-[#1f1f1f] h-6 relative rounded-sm overflow-hidden shadow-lg">
+                <div 
+                  className={`h-full transition-all duration-1000 shadow-[0_0_15px_rgba(185,28,28,0.5)] ${isZombie ? 'bg-emerald-600' : 'bg-[#b91c1c]'}`}
+                  style={{ width: `${globalProgress}%` }}
+                ></div>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <span className="text-[10px] font-mono font-black tracking-[0.4em] text-white drop-shadow-md">
+                    PROGRESSO_MISSÃO: {globalProgress}%
+                  </span>
+                </div>
+             </div>
+
              <div className={`flex items-center justify-between p-6 bg-[#050505] border border-[#1a1a1a] border-l-4 rounded-sm ${isZombie ? 'border-l-emerald-500' : 'border-l-[#b91c1c]'}`}>
                 <div>
-                   <span className="text-[9px] font-mono text-zinc-600 uppercase mb-1 block">CRONÔMETRO</span>
+                   <span className="text-[9px] font-mono text-zinc-600 uppercase mb-1 block">CRONÔMETRO_TERMINAL</span>
                    <span className={`text-6xl font-mono font-black italic tracking-tighter leading-none ${timeLeft < 25 ? 'text-red-600 animate-pulse' : 'text-white'}`}>
                       {Math.floor(timeLeft/60)}:{(timeLeft%60).toString().padStart(2,'0')}
                    </span>
                 </div>
                 <div className="text-right">
-                   <span className="text-[9px] font-mono text-zinc-600 uppercase mb-1 block">PROGRESSO</span>
+                   <span className="text-[9px] font-mono text-zinc-600 uppercase mb-1 block">SINC_INDIVIDUAL</span>
                    <span className={`text-3xl font-header italic uppercase tracking-widest leading-none ${isZombie ? 'text-emerald-400' : 'text-[#b91c1c]'}`}>
                      {isZombie ? 'INFECTADO' : `TASK ${currentTaskIndex+1}/4`}
                    </span>
                 </div>
              </div>
 
-             <div className="bg-[#050505] border border-[#1a1a1a] p-1 min-h-[400px] flex items-center justify-center relative rounded-sm">
+             <div className="bg-[#050505] border border-[#1a1a1a] p-1 min-h-[420px] flex items-center justify-center relative rounded-sm">
                 {isDead ? (
                   <div className="text-center p-10 bg-zinc-950 border-2 border-emerald-900 animate-in zoom-in duration-500">
                     <div className="text-7xl mb-4">☣️</div>
@@ -543,7 +554,10 @@ const App: React.FC = () => {
                     key={currentTaskIndex + '-' + taskResetTrigger} 
                     task={tasks[currentTaskIndex]} 
                     onUnlock={() => setIsTimerActive(true)} 
-                    onComplete={() => setShowMeetingAlert(true)} 
+                    onComplete={() => {
+                      setIsTimerActive(false);
+                      setShowReceipt(true);
+                    }} 
                   />
                 )}
              </div>
