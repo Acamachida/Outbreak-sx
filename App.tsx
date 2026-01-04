@@ -79,6 +79,7 @@ const App: React.FC = () => {
   const [playerClass, setPlayerClass] = useState<PlayerClass>('DEFAULT');
   const [isZombie, setIsZombie] = useState(false);
   const [isDead, setIsDead] = useState(false);
+  const [isHost, setIsHost] = useState(false);
   const [roomCode, setRoomCode] = useState('');
   const [joiningCode, setJoiningCode] = useState('');
   const [authCode, setAuthCode] = useState('');
@@ -106,6 +107,22 @@ const App: React.FC = () => {
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const radarIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const playerNameRef = useRef(playerName);
+  const playerClassRef = useRef(playerClass);
+  const isZombieRef = useRef(isZombie);
+  const isDeadRef = useRef(isDead);
+  const currentTaskIndexRef = useRef(currentTaskIndex);
+  const gameStateRef = useRef(gameState);
+  const isHostRef = useRef(isHost);
+
+  useEffect(() => { playerNameRef.current = playerName; }, [playerName]);
+  useEffect(() => { playerClassRef.current = playerClass; }, [playerClass]);
+  useEffect(() => { isZombieRef.current = isZombie; }, [isZombie]);
+  useEffect(() => { isDeadRef.current = isDead; }, [isDead]);
+  useEffect(() => { currentTaskIndexRef.current = currentTaskIndex; }, [currentTaskIndex]);
+  useEffect(() => { gameStateRef.current = gameState; }, [gameState]);
+  useEffect(() => { isHostRef.current = isHost; }, [isHost]);
+
   const calculateDistance = (lat1: number, lon1: number, lat2: number, lon2: number) => {
     const R = 6371e3;
     const dLat = (lat2 - lat1) * Math.PI / 180;
@@ -132,16 +149,18 @@ const App: React.FC = () => {
   }, [realSquad]);
 
   const syncLocalPresence = useCallback((updates: Partial<SquadMember> = {}) => {
+    if (!channelRef.current) return;
+
     const myData: SquadMember = { 
         id: MY_ID, 
-        name: playerName || 'OPERADOR', 
-        pClass: playerClass, 
-        isZombie: isZombie || playerClass === 'INFECTADO' || playerClass === 'ZUMBI_PRIMORDIAL', 
-        isDead: isDead, 
-        tasksCompleted: currentTaskIndex,
+        name: playerNameRef.current || 'OPERADOR', 
+        pClass: playerClassRef.current, 
+        isZombie: isZombieRef.current, 
+        isDead: isDeadRef.current, 
+        tasksCompleted: currentTaskIndexRef.current,
         coords: myCoords || undefined,
-        isReady: gameState === GameState.PLAYING,
-        isHost: false, // Pode ser ajustado se necessário
+        isReady: gameStateRef.current === GameState.PLAYING,
+        isHost: isHostRef.current,
         ...updates 
     };
 
@@ -151,10 +170,8 @@ const App: React.FC = () => {
       return [...prev, myData];
     });
 
-    if (channelRef.current) {
-        channelRef.current.send({ type: 'broadcast', event: 'presence_sync', payload: myData });
-    }
-  }, [playerName, playerClass, isDead, isZombie, currentTaskIndex, myCoords, gameState]);
+    channelRef.current.send({ type: 'broadcast', event: 'presence_sync', payload: myData });
+  }, [myCoords]);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -170,72 +187,49 @@ const App: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (myCoords && channelRef.current) {
-        syncLocalPresence();
-    }
-  }, [myCoords, syncLocalPresence]);
+    syncLocalPresence();
+  }, [playerName, playerClass, isZombie, isDead, currentTaskIndex, gameState, isHost, syncLocalPresence]);
 
-  const addMessage = useCallback((msg: Omit<ChatMessage, 'id' | 'timestamp'>) => {
-    if (isZombie || isDead) return;
+  const addMessage = useCallback((text: string) => {
     const newMessage: ChatMessage = { 
-      ...msg, 
       id: Math.random().toString(36).substring(7), 
+      sender: playerNameRef.current || 'OPERADOR', 
+      text, 
+      type: 'TEXT',
+      isZombie: isZombieRef.current,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) 
     };
+    
+    // Mostra localmente
     setMessages(prev => [...prev, newMessage]);
+    
+    // Transmite para os outros
     if (channelRef.current) {
       channelRef.current.send({ type: 'broadcast', event: 'chat_message', payload: newMessage });
     }
-  }, [isZombie, isDead]);
+  }, []);
 
   const handleSendToRadio = useCallback((data: { taskTitle: string, receiptId: string, timeLeft: number }) => {
-    if (isZombie || isDead) return;
     const receiptMsg: ChatMessage = {
       id: Math.random().toString(36).substring(7),
-      sender: playerName,
+      sender: playerNameRef.current || 'OPERADOR',
       text: `Tarefa Concluída: ${data.taskTitle}`,
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
       type: 'RECEIPT',
+      isZombie: isZombieRef.current,
       metadata: data
     };
     setMessages(prev => [...prev, receiptMsg]);
     if (channelRef.current) {
       channelRef.current.send({ type: 'broadcast', event: 'chat_message', payload: receiptMsg });
     }
-  }, [playerName, isZombie, isDead]);
-
-  const endGame = useCallback(async (success: boolean, reason: string) => {
-    if (timerRef.current) clearInterval(timerRef.current);
-    setIsTimerActive(false);
-    setGameState(success ? GameState.FINISHED : GameState.FAILED);
-    setEvaluation(reason);
   }, []);
 
-  useEffect(() => {
-    if (gameState !== GameState.PLAYING) return;
-    const survivors = realSquad.filter(m => !m.isZombie && !m.isDead);
-    if (survivors.length === 0 && realSquad.length > 0) {
-      endGame(false, "FIM DA LINHA. A HORDA DOMINOU O SETOR.");
-      return;
-    }
-    const allHumansFinished = survivors.length > 0 && survivors.every(s => s.tasksCompleted === 4);
-    if (allHumansFinished) {
-      endGame(true, "MISSÃO CUMPRIDA! EXTRAÇÃO AUTORIZADA.");
-    }
-  }, [realSquad, gameState, endGame]);
-
-  const broadcastStartGame = () => {
-    if (channelRef.current) {
-        channelRef.current.send({ type: 'broadcast', event: 'game_start', payload: {} });
-    }
-    startGameLocal();
-  };
-
   const startGameLocal = useCallback(() => {
-    const isInf = playerClass === 'INFECTADO' || playerClass === 'ZUMBI_PRIMORDIAL';
+    const isInf = playerClassRef.current === 'INFECTADO' || playerClassRef.current === 'ZUMBI_PRIMORDIAL';
     setIsZombie(isInf);
     setIsDead(false);
-    const initialTasks: Task[] = CLASS_DATA[playerClass].tasks.map((t: any, i: number) => ({
+    const initialTasks: Task[] = CLASS_DATA[playerClassRef.current].tasks.map((t: any, i: number) => ({
       id: i + 1, type: t.type, title: t.title, description: t.desc, code: t.code, data: t.data, validator: () => true
     }));
     setTasks(initialTasks);
@@ -244,7 +238,15 @@ const App: React.FC = () => {
     setIsTimerActive(false); 
     setGameState(GameState.PLAYING);
     syncLocalPresence({ tasksCompleted: 0, isZombie: isInf, isDead: false, isReady: true });
-  }, [playerClass, syncLocalPresence]);
+  }, [syncLocalPresence]);
+
+  const broadcastStartGame = () => {
+    if (!isHost) return;
+    if (channelRef.current) {
+        channelRef.current.send({ type: 'broadcast', event: 'game_start', payload: {} });
+    }
+    startGameLocal();
+  };
 
   const handleGoBack = () => {
     if (channelRef.current) channelRef.current.unsubscribe();
@@ -253,6 +255,7 @@ const App: React.FC = () => {
     setRoomCode('');
     setRealSquad([]);
     setMessages([]);
+    setIsHost(false);
   };
 
   useEffect(() => {
@@ -273,13 +276,9 @@ const App: React.FC = () => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [gameState, isTimerActive, showReceipt, showMeetingAlert, showRadar]);
 
-  // SUPABASE SYNC EFFECT
   useEffect(() => {
     if (!supabase || !roomCode) return;
     
-    // Evita recriar o canal se ele já existe para a mesma sala
-    if (channelRef.current && channelRef.current.topic === `realtime:room_${roomCode}`) return;
-
     const channel = supabase.channel(`room_${roomCode}`, {
         config: { broadcast: { self: false } }
     });
@@ -293,7 +292,6 @@ const App: React.FC = () => {
     });
 
     channel.on('broadcast', { event: 'request_presence' }, () => {
-        // Alguém pediu presença, eu respondo.
         syncLocalPresence();
     });
 
@@ -302,7 +300,6 @@ const App: React.FC = () => {
     });
 
     channel.on('broadcast', { event: 'chat_message' }, ({ payload }) => {
-      // Jogadores mortos/infectados não ouvem rádio (ajuste conforme regra do jogo)
       setMessages(prev => [...prev, payload]);
     });
 
@@ -323,9 +320,6 @@ const App: React.FC = () => {
             setIsZombie(false);
             setIsDead(false);
             setPlayerClass('DEFAULT');
-            setTasks(CLASS_DATA['DEFAULT'].tasks.map((t: any, i: number) => ({
-              id: i + 1, type: t.type, title: t.title, description: t.desc, code: t.code, data: t.data, validator: () => true
-            })));
             syncLocalPresence({ isZombie: false, isDead: false, pClass: 'DEFAULT' });
             setActionFeedback("ANTÍGENO APLICADO! VOCÊ ESTÁ CURADO.");
             setTimeout(() => setActionFeedback(null), 5000);
@@ -347,9 +341,7 @@ const App: React.FC = () => {
     channel.subscribe((status) => {
         if (status === 'SUBSCRIBED') {
             channelRef.current = channel;
-            // Pede para quem já está na sala se identificar (PING)
             channel.send({ type: 'broadcast', event: 'request_presence', payload: {} });
-            // Manda a própria presença (PONG)
             syncLocalPresence();
         }
     });
@@ -362,39 +354,20 @@ const App: React.FC = () => {
     };
   }, [roomCode, syncLocalPresence, startGameLocal]);
 
-  const handleTacticalAction = (event: string, targetId: string) => {
-    const target = realSquad.find(m => m.id === targetId);
-    if (!target?.coords || !myCoords) { alert("GPS OFF-LINE"); return; }
-    const dist = calculateDistance(myCoords.lat, myCoords.lng, target.coords.lat, target.coords.lng);
-    if (dist > PROXIMITY_ACTION_RANGE) {
-      setActionFeedback(`ALVO MUITO DISTANTE (${Math.round(dist)}m)`);
-      setTimeout(() => setActionFeedback(null), 3000);
+  useEffect(() => {
+    if (gameState !== GameState.PLAYING) return;
+    const survivors = realSquad.filter(m => !m.isZombie && !m.isDead);
+    if (survivors.length === 0 && realSquad.length > 0) {
+      setGameState(GameState.FAILED);
+      setEvaluation("EXTINÇÃO TOTAL. A HORDA DOMINOU O SETOR.");
       return;
     }
-    if (channelRef.current) {
-      channelRef.current.send({ type: 'broadcast', event, payload: { targetId } });
-      setActionFeedback("AÇÃO CONFIRMADA.");
-      setTimeout(() => setActionFeedback(null), 3000);
+    const allHumansFinished = survivors.length > 0 && survivors.every(s => s.tasksCompleted === 4);
+    if (allHumansFinished) {
+      setGameState(GameState.FINISHED);
+      setEvaluation("MISSÃO CUMPRIDA! EXTRAÇÃO AUTORIZADA.");
     }
-  };
-
-  const handleStartRadar = () => {
-    if (currentTaskIndex < 1) {
-      alert("RADAR BLOQUEADO: FINALIZE A PRIMEIRA TASK.");
-      return;
-    }
-    const now = Date.now();
-    if (now - lastRadarUseTime < RADAR_COOLDOWN_MS) {
-      const remaining = Math.ceil((RADAR_COOLDOWN_MS - (now - lastRadarUseTime)) / 1000);
-      alert(`RADAR EM RECARGA: AGUARDE ${remaining}s`);
-      return;
-    }
-    setRadarTimer(RADAR_DURATION_S);
-    setLastRadarUseTime(now);
-    setShowRadar(true);
-  };
-
-  const radarCooldownProgress = Math.min(100, ((Date.now() - lastRadarUseTime) / RADAR_COOLDOWN_MS) * 100);
+  }, [realSquad, gameState]);
 
   return (
     <div className={`min-h-screen bg-black text-white flex flex-col items-center relative overflow-hidden ${nearbyPlayers.length > 0 ? 'animate-proximity-pulse' : ''}`}>
@@ -411,11 +384,9 @@ const App: React.FC = () => {
            </div>
         </div>
         
-        {!isZombie && !isDead && (
-          <button onClick={() => setIsChatOpen(true)} className="flex items-center gap-2 bg-[#1a1a1a] border border-[#2d2d2d] px-4 py-2 rounded-sm text-[10px] font-mono tracking-widest text-zinc-400 hover:text-white transition-all">
-            <span className="text-sm">📻</span> RÁDIO
-          </button>
-        )}
+        <button onClick={() => setIsChatOpen(true)} className="flex items-center gap-2 bg-[#1a1a1a] border border-[#2d2d2d] px-4 py-2 rounded-sm text-[10px] font-mono tracking-widest text-zinc-400 hover:text-white transition-all">
+          <span className="text-sm">📻</span> RÁDIO
+        </button>
       </header>
 
       <main className="flex-1 w-full flex flex-col items-center justify-center px-6 z-10">
@@ -426,10 +397,10 @@ const App: React.FC = () => {
               <h1 className="text-8xl font-header neon-text-red italic leading-none mb-6">OUTBREAK</h1>
             </div>
             <div className="w-full space-y-4 mb-8">
-              <button onClick={() => { setRoomCode(Math.floor(1000+Math.random()*9000).toString()); setGameState(GameState.SELECT_CLASS); }} className="w-full py-10 btn-red text-white flex flex-col items-center justify-center rounded-sm">
+              <button onClick={() => { setIsHost(true); setRoomCode(Math.floor(1000+Math.random()*9000).toString()); setGameState(GameState.SELECT_CLASS); }} className="w-full py-10 btn-red text-white flex flex-col items-center justify-center rounded-sm">
                 <span className="text-3xl font-header tracking-widest italic">CRIAR SALA</span>
               </button>
-              <button onClick={() => setGameState(GameState.JOIN_ROOM)} className="w-full py-10 btn-outline text-white flex flex-col items-center justify-center rounded-sm">
+              <button onClick={() => { setIsHost(false); setGameState(GameState.JOIN_ROOM); }} className="w-full py-10 btn-outline text-white flex flex-col items-center justify-center rounded-sm">
                 <span className="text-3xl font-header tracking-widest italic">ENTRAR EM SALA</span>
               </button>
             </div>
@@ -473,24 +444,28 @@ const App: React.FC = () => {
                 </div>
                 <div className="space-y-3">
                   <button onClick={() => {
-                        if (gameState === GameState.JOIN_ROOM) { setRoomCode(joiningCode); setGameState(GameState.SELECT_CLASS); }
-                        else {
+                        if (gameState === GameState.JOIN_ROOM) { 
+                          setRoomCode(joiningCode); 
+                          setGameState(GameState.SELECT_CLASS); 
+                        } else {
                           const found = Object.keys(CLASS_DATA).find(k => CLASS_DATA[k as PlayerClass].auth === authCode) as PlayerClass;
-                          if (found) { 
-                            setPlayerClass(found); 
-                            setGameState(GameState.LOBBY);
-                          }
+                          if (found) { setPlayerClass(found); setGameState(GameState.LOBBY); }
                           else { alert("CHAVE INVÁLIDA"); setAuthCode(''); }
                         }
                     }} className="w-full py-6 btn-red text-white text-2xl font-header tracking-widest italic disabled:opacity-20 rounded-sm" disabled={gameState === GameState.JOIN_ROOM ? joiningCode.length < 4 : (authCode.length < 8 || !playerName)}>
                     CONFIRMAR
                   </button>
-                  <button onClick={() => { 
+                  <button onClick={() => {
                     if (!playerName) { alert("DÊ UM NOME AO SEU OPERADOR"); return; }
-                    setPlayerClass('DEFAULT'); 
-                    if (gameState === GameState.JOIN_ROOM) setRoomCode(joiningCode);
-                    setGameState(GameState.LOBBY); 
-                  }} className="w-full py-4 btn-outline text-white text-xl font-header tracking-widest italic rounded-sm opacity-60">SEM CLASSE</button>
+                    setPlayerClass('DEFAULT');
+                    if (gameState === GameState.JOIN_ROOM) {
+                       if (joiningCode.length < 4) { alert("DIGITE A FREQUÊNCIA DO CANAL"); return; }
+                       setRoomCode(joiningCode);
+                    }
+                    setGameState(GameState.LOBBY);
+                  }} className="w-full py-4 btn-outline text-white text-xl font-header tracking-widest italic rounded-sm opacity-80 border-white/20">
+                    SEM CLASSE (SOBREVIVENTE)
+                  </button>
                   <button onClick={handleGoBack} className="w-full py-4 btn-outline text-white text-xl font-header tracking-widest italic rounded-sm opacity-60">VOLTAR</button>
                 </div>
              </div>
@@ -507,105 +482,24 @@ const App: React.FC = () => {
                   <div key={m.id} className="p-4 bg-[#050505] border border-[#1a1a1a] flex justify-between items-center rounded-sm">
                     <span className="text-xl font-header uppercase italic tracking-widest">{m.name}</span>
                     <span className={`text-[9px] font-mono uppercase ${m.id === MY_ID ? 'text-[#b91c1c]' : 'text-zinc-500'}`}>
-                        {CLASS_DATA[m.pClass].name} {m.id === MY_ID ? '(VOCÊ)' : ''}
+                        {m.isHost ? 'LÍDER' : CLASS_DATA[m.pClass].name} {m.id === MY_ID ? '(VOCÊ)' : ''}
                     </span>
                   </div>
                 ))}
              </div>
              <div className="space-y-3">
-                <button onClick={broadcastStartGame} className="w-full py-8 btn-red text-white text-4xl font-header tracking-widest italic rounded-sm">INICIAR MISSÃO</button>
+                {isHost ? (
+                  <button onClick={broadcastStartGame} className="w-full py-8 btn-red text-white text-4xl font-header tracking-widest italic rounded-sm">INICIAR MISSÃO</button>
+                ) : (
+                  <div className="w-full py-8 bg-zinc-900 border border-zinc-800 text-zinc-500 text-center text-xl font-header tracking-widest italic uppercase">Aguardando Líder...</div>
+                )}
                 <button onClick={() => setGameState(GameState.SELECT_CLASS)} className="w-full py-4 btn-outline text-white text-xl font-header tracking-widest italic rounded-sm opacity-60">VOLTAR PARA CLASSES</button>
              </div>
           </div>
         )}
 
         {gameState === GameState.PLAYING && (
-          <div className="w-full max-w-xl space-y-6 relative">
-             <div className="w-full bg-[#050505] border border-[#1a1a1a] p-4 rounded-sm">
-                <div className="flex justify-between items-end mb-2">
-                   <span className="text-[9px] font-mono text-zinc-600 uppercase tracking-widest font-bold">PROGRESSO_SETOR_GLOBAL</span>
-                   <span className="text-2xl font-header text-emerald-500 tracking-widest italic">{globalProgress}%</span>
-                </div>
-                <div className="h-4 w-full bg-zinc-900 rounded-full overflow-hidden border border-zinc-800 p-[2px]">
-                   <div className="h-full bg-emerald-600 transition-all duration-1000 rounded-full" style={{ width: `${globalProgress}%` }} />
-                </div>
-             </div>
-
-             <div className="grid grid-cols-2 gap-2">
-                {isZombie && (
-                  <button onClick={() => setShowInfectMenu(true)} className="py-4 bg-emerald-900/50 border border-emerald-500 text-white font-header text-xl tracking-widest italic rounded-sm">☣️ INFECTAR</button>
-                )}
-                {playerClass === 'MEDICO' && !isZombie && (
-                  <button onClick={() => setShowHealMenu(true)} className="py-4 bg-blue-900/50 border border-blue-500 text-white font-header text-xl tracking-widest italic rounded-sm">💉 CURAR</button>
-                )}
-                {playerClass === 'EXECUTOR' && !isZombie && (
-                  <button onClick={() => setShowKillMenu(true)} className="py-4 bg-red-900/50 border border-red-500 text-white font-header text-xl tracking-widest italic rounded-sm">🔫 ELIMINAR</button>
-                )}
-                {(playerClass === 'MAPEADOR' || playerClass === 'ZUMBI_PRIMORDIAL') && (
-                  <button 
-                    onClick={handleStartRadar} 
-                    className={`py-4 bg-zinc-900 border border-white text-white font-header text-xl tracking-widest italic rounded-sm relative overflow-hidden ${currentTaskIndex < 1 || radarCooldownProgress < 100 ? 'opacity-40 grayscale' : ''}`}
-                  >
-                    <span className="relative z-10">📡 LOCALIZAR</span>
-                    <div className="absolute bottom-0 left-0 h-1 bg-white transition-all duration-300" style={{ width: `${radarCooldownProgress}%` }} />
-                  </button>
-                )}
-             </div>
-
-             {(showInfectMenu || showHealMenu || showKillMenu) && (
-               <div className="fixed inset-0 z-[160] bg-black/95 flex flex-col items-center justify-center p-6 border-2 border-[#b91c1c] animate-in fade-in">
-                  <h2 className="text-3xl font-header italic text-white mb-8 uppercase tracking-widest">
-                    {showInfectMenu ? 'Transmissão Viral' : showHealMenu ? 'Protocolo Médico' : 'Neutralizar Alvo'}
-                  </h2>
-                  <div className="w-full space-y-3 max-h-64 overflow-y-auto mb-8 px-4">
-                     {realSquad.filter(m => {
-                        if (showInfectMenu) return m.id !== MY_ID && !m.isZombie;
-                        if (showHealMenu) return m.id !== MY_ID && m.isZombie;
-                        if (showKillMenu) return m.id !== MY_ID && m.isZombie;
-                        return false;
-                     }).map(member => (
-                       <button key={member.id} onClick={() => { 
-                         const event = showInfectMenu ? 'infection_attempt' : showHealMenu ? 'heal_attempt' : 'kill_attempt';
-                         handleTacticalAction(event, member.id);
-                         setShowInfectMenu(false); setShowHealMenu(false); setShowKillMenu(false);
-                       }} className="w-full p-4 bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-xl font-header italic tracking-widest uppercase flex justify-between">
-                         <span>{member.name}</span>
-                         <span className="text-xs font-mono">{member.coords ? `${Math.round(calculateDistance(myCoords?.lat||0, myCoords?.lng||0, member.coords.lat, member.coords.lng))}m` : '---'}</span>
-                       </button>
-                     ))}
-                  </div>
-                  <button onClick={() => { setShowInfectMenu(false); setShowHealMenu(false); setShowKillMenu(false); }} className="py-3 px-8 btn-outline text-white font-header text-xl uppercase tracking-widest italic rounded-sm">CANCELAR</button>
-               </div>
-             )}
-
-             {showRadar && (
-               <TrackerMap 
-                 members={realSquad} 
-                 myId={MY_ID} 
-                 timeLeft={radarTimer} 
-                 range={playerClass === 'MAPEADOR' ? MAPPER_RADAR_RANGE : PRIMORDIAL_RADAR_RANGE} 
-                 isMapeador={playerClass === 'MAPEADOR'}
-                 isPrimordial={playerClass === 'ZUMBI_PRIMORDIAL'}
-                 onClose={() => setShowRadar(false)} 
-               />
-             )}
-
-             {showMeetingAlert && (
-               <div className="fixed inset-0 z-[200] bg-black/95 flex items-center justify-center p-6 animate-in fade-in duration-300 backdrop-blur-md">
-                 <div className="w-full max-md bg-zinc-950 border-4 border-[#b91c1c] p-8 text-center shadow-[0_0_100px_rgba(185,28,28,0.2)]">
-                   <h2 className="text-5xl font-header italic text-white mb-6 leading-none">REUNIÃO DE EMERGÊNCIA</h2>
-                   <p className="text-xl font-mono text-zinc-200 mb-8 leading-relaxed uppercase">REÚNAM-SE NO PONTO INICIAL.<br/><span className="text-2xl font-bold text-[#b91c1c]">DECISÃO EM GRUPO.</span></p>
-                   <button onClick={() => { setShowMeetingAlert(false); if (!isDead) setShowReceipt(true); }} className="w-full py-6 bg-[#b91c1c] hover:bg-[#dc2626] text-white font-header text-3xl tracking-widest italic transition-all">PROSSEGUIR</button>
-                 </div>
-               </div>
-             )}
-
-             {actionFeedback && (
-               <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[210] w-[90%] p-8 bg-zinc-950 border-4 border-emerald-600 shadow-2xl text-center animate-in zoom-in">
-                  <h3 className="text-3xl font-header italic text-white uppercase tracking-tighter leading-tight">{actionFeedback}</h3>
-               </div>
-             )}
-
+          <div className="w-full max-xl space-y-6 relative">
              <div className={`flex items-center justify-between p-6 bg-[#050505] border border-[#1a1a1a] border-l-4 rounded-sm ${isZombie ? 'border-l-emerald-500' : 'border-l-[#b91c1c]'}`}>
                 <div>
                    <span className="text-[9px] font-mono text-zinc-600 uppercase mb-1 block">CRONÔMETRO</span>
@@ -662,19 +556,17 @@ const App: React.FC = () => {
                 <span className="text-5xl">{gameState === GameState.FINISHED ? '🏆' : '☣️'}</span>
              </div>
              <h2 className={`text-6xl font-header italic leading-tight uppercase ${gameState === GameState.FINISHED ? 'text-emerald-500' : 'text-[#b91c1c]'}`}>
-                {gameState === GameState.FINISHED ? 'VITÓRIA DO ESQUADRÃO' : 'EXTINÇÃO TOTAL'}
+                {gameState === GameState.FINISHED ? 'VITÓRIA' : 'FRACASSO'}
              </h2>
-             <div className="p-8 bg-[#050505] border border-[#1a1a1a] relative rounded-sm">
-                <p className="text-2xl italic text-white/90 font-mono leading-relaxed font-bold">"{evaluation}"</p>
-             </div>
-             <button onClick={handleGoBack} className="w-full py-6 btn-outline text-white font-header text-3xl uppercase tracking-widest italic hover:bg-[#b91c1c] transition-all rounded-sm">VOLTAR AO MENU</button>
+             <p className="text-2xl font-mono italic">"{evaluation}"</p>
+             <button onClick={handleGoBack} className="w-full py-6 btn-outline text-white font-header text-3xl uppercase tracking-widest italic rounded-sm">VOLTAR AO MENU</button>
           </div>
         )}
       </main>
       
       <Chat 
         messages={messages} 
-        onSendMessage={(text) => addMessage({ sender: playerName, text, type: 'TEXT' })} 
+        onSendMessage={addMessage} 
         isOpen={isChatOpen} 
         onClose={() => setIsChatOpen(false)} 
         playerName={playerName} 

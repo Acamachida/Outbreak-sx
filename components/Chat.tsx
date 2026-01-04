@@ -14,9 +14,13 @@ const Chat: React.FC<ChatProps> = ({ messages, onSendMessage, isOpen, onClose, p
   const [inputText, setInputText] = useState('');
   const scrollRef = useRef<HTMLDivElement>(null);
 
+  // Auto-scroll sempre que novas mensagens chegarem ou o chat abrir
   useEffect(() => {
     if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      scrollRef.current.scrollTo({
+        top: scrollRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
     }
   }, [messages, isOpen]);
 
@@ -66,12 +70,12 @@ const Chat: React.FC<ChatProps> = ({ messages, onSendMessage, isOpen, onClose, p
                 <div className={`${msg.isZombie ? 'text-emerald-800' : 'text-emerald-700'} font-black mt-2`}>✓ STATUS: {msg.isZombie ? "REIVINDICADO" : "CONCLUÍDO"}</div>
               </div>
             ) : (
-              <div className={`p-3 rounded-sm max-w-[90%] text-sm ${
+              <div className={`p-3 rounded-sm max-w-[90%] text-sm border ${
                 msg.sender === 'VELHO REED' 
-                  ? 'bg-red-900/20 text-red-100 border border-red-900/40 italic' 
+                  ? 'bg-red-900/20 text-red-100 border-red-900/40 italic' 
                   : msg.isZombie
-                    ? 'bg-emerald-900/20 text-emerald-100 border border-emerald-900/40'
-                    : 'bg-zinc-900/80 text-zinc-300 border border-zinc-800'
+                    ? 'bg-emerald-900/20 text-emerald-100 border-emerald-900/40'
+                    : 'bg-zinc-900/80 text-zinc-300 border-zinc-800'
               }`}>
                 {msg.text}
               </div>
@@ -89,7 +93,7 @@ const Chat: React.FC<ChatProps> = ({ messages, onSendMessage, isOpen, onClose, p
       {/* Input */}
       <form onSubmit={handleSubmit} className="p-4 bg-zinc-950 border-t border-zinc-900">
         <div className="flex flex-col gap-2">
-          <span className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest">Identidade: {playerName}</span>
+          <span className="text-[9px] text-zinc-600 font-bold uppercase tracking-widest">Identidade: {playerName || 'ANÔNIMO'}</span>
           <div className="flex gap-2">
             <input
               type="text"
