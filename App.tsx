@@ -22,8 +22,8 @@ const PROXIMITY_ACTION_RANGE = 15;
 const CRITICAL_PROXIMITY_RANGE = 10; 
 const MAPPER_RADAR_RANGE = 50; 
 const PRIMORDIAL_RADAR_RANGE = 25; 
-const RADAR_COOLDOWN_MS = 300000; // 5 minutos
-const RADAR_DURATION_S = 70; // 70 segundos
+const RADAR_COOLDOWN_MS = 300000; 
+const RADAR_DURATION_S = 70; 
 
 const CLASS_DATA: Record<PlayerClass, any> = {
   'MEDICO': { name: 'MÉDICO', auth: '#724#890', tasks: [
@@ -95,12 +95,9 @@ const App: React.FC = () => {
   const [showInfectMenu, setShowInfectMenu] = useState(false);
   const [showHealMenu, setShowHealMenu] = useState(false);
   const [showKillMenu, setShowKillMenu] = useState(false);
-  
-  // Radar Mapeador States
   const [showRadar, setShowRadar] = useState(false);
   const [radarTimer, setRadarTimer] = useState(0);
   const [lastRadarUseTime, setLastRadarUseTime] = useState(0);
-  
   const [myCoords, setMyCoords] = useState<{lat: number, lng: number} | null>(null);
   const [actionFeedback, setActionFeedback] = useState<string | null>(null);
   const [taskResetTrigger, setTaskResetTrigger] = useState(0);
@@ -134,16 +131,30 @@ const App: React.FC = () => {
     return Math.min(Math.round((totalCompletedTasks / totalPossibleTasks) * 100), 100);
   }, [realSquad]);
 
-  const syncLocalPresence = useCallback((updates: Partial<SquadMember>) => {
+  const syncLocalPresence = useCallback((updates: Partial<SquadMember> = {}) => {
+    const myData: SquadMember = { 
+        id: MY_ID, 
+        name: playerName || 'OPERADOR', 
+        pClass: playerClass, 
+        isZombie: isZombie || playerClass === 'INFECTADO' || playerClass === 'ZUMBI_PRIMORDIAL', 
+        isDead: isDead, 
+        tasksCompleted: currentTaskIndex,
+        coords: myCoords || undefined,
+        isReady: gameState === GameState.PLAYING,
+        isHost: false, // Pode ser ajustado se necessário
+        ...updates 
+    };
+
     setRealSquad(prev => {
       const exists = prev.find(m => m.id === MY_ID);
-      if (exists) return prev.map(m => m.id === MY_ID ? { ...m, ...updates } : m);
-      return [...prev, { id: MY_ID, name: playerName, pClass: playerClass, isReady: false, isHost: true, isZombie: isZombie || playerClass === 'INFECTADO' || playerClass === 'ZUMBI_PRIMORDIAL', isDead: isDead, tasksCompleted: currentTaskIndex, ...updates } as SquadMember];
+      if (exists) return prev.map(m => m.id === MY_ID ? { ...m, ...myData } : m);
+      return [...prev, myData];
     });
+
     if (channelRef.current) {
-        channelRef.current.send({ type: 'broadcast', event: 'presence_sync', payload: { id: MY_ID, ...updates } });
+        channelRef.current.send({ type: 'broadcast', event: 'presence_sync', payload: myData });
     }
-  }, [playerName, playerClass, isDead, isZombie, currentTaskIndex]);
+  }, [playerName, playerClass, isDead, isZombie, currentTaskIndex, myCoords, gameState]);
 
   useEffect(() => {
     if (!navigator.geolocation) return;
@@ -151,13 +162,18 @@ const App: React.FC = () => {
       (pos) => {
         const coords = { lat: pos.coords.latitude, lng: pos.coords.longitude };
         setMyCoords(coords);
-        syncLocalPresence({ coords });
       },
       (err) => console.error(err),
       { enableHighAccuracy: true, timeout: 5000, maximumAge: 0 }
     );
     return () => navigator.geolocation.clearWatch(watchId);
-  }, [syncLocalPresence]);
+  }, []);
+
+  useEffect(() => {
+    if (myCoords && channelRef.current) {
+        syncLocalPresence();
+    }
+  }, [myCoords, syncLocalPresence]);
 
   const addMessage = useCallback((msg: Omit<ChatMessage, 'id' | 'timestamp'>) => {
     if (isZombie || isDead) return;
@@ -208,7 +224,14 @@ const App: React.FC = () => {
     }
   }, [realSquad, gameState, endGame]);
 
-  const startGameLocal = () => {
+  const broadcastStartGame = () => {
+    if (channelRef.current) {
+        channelRef.current.send({ type: 'broadcast', event: 'game_start', payload: {} });
+    }
+    startGameLocal();
+  };
+
+  const startGameLocal = useCallback(() => {
     const isInf = playerClass === 'INFECTADO' || playerClass === 'ZUMBI_PRIMORDIAL';
     setIsZombie(isInf);
     setIsDead(false);
@@ -220,17 +243,18 @@ const App: React.FC = () => {
     setTimeLeft(GAME_TIME_LIMIT);
     setIsTimerActive(false); 
     setGameState(GameState.PLAYING);
-    syncLocalPresence({ tasksCompleted: 0, isZombie: isInf, isDead: false });
-  };
+    syncLocalPresence({ tasksCompleted: 0, isZombie: isInf, isDead: false, isReady: true });
+  }, [playerClass, syncLocalPresence]);
 
   const handleGoBack = () => {
+    if (channelRef.current) channelRef.current.unsubscribe();
+    channelRef.current = null;
     setGameState(GameState.IDLE);
     setRoomCode('');
     setRealSquad([]);
     setMessages([]);
   };
 
-  // Main Timer Effect
   useEffect(() => {
     if (gameState === GameState.PLAYING && isTimerActive && !showReceipt && !showMeetingAlert && !showRadar) {
       timerRef.current = setInterval(() => {
@@ -249,30 +273,17 @@ const App: React.FC = () => {
     return () => { if (timerRef.current) clearInterval(timerRef.current); };
   }, [gameState, isTimerActive, showReceipt, showMeetingAlert, showRadar]);
 
-  // Radar Timer Effect
-  useEffect(() => {
-    if (showRadar) {
-      radarIntervalRef.current = setInterval(() => {
-        setRadarTimer(prev => {
-          if (prev <= 1) {
-            setShowRadar(false);
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
-    } else if (radarIntervalRef.current) {
-      clearInterval(radarIntervalRef.current);
-    }
-    return () => { if (radarIntervalRef.current) clearInterval(radarIntervalRef.current); };
-  }, [showRadar]);
-
+  // SUPABASE SYNC EFFECT
   useEffect(() => {
     if (!supabase || !roomCode) return;
-    const channel = supabase.channel(`room_${roomCode}`);
-    channel.on('broadcast', { event: 'chat_message' }, ({ payload }) => {
-      if (!isZombie && !isDead) setMessages(prev => [...prev, payload]);
+    
+    // Evita recriar o canal se ele já existe para a mesma sala
+    if (channelRef.current && channelRef.current.topic === `realtime:room_${roomCode}`) return;
+
+    const channel = supabase.channel(`room_${roomCode}`, {
+        config: { broadcast: { self: false } }
     });
+
     channel.on('broadcast', { event: 'presence_sync' }, ({ payload }) => {
         setRealSquad(prev => {
           const exists = prev.find(m => m.id === payload.id);
@@ -280,6 +291,21 @@ const App: React.FC = () => {
           return [...prev, payload];
         });
     });
+
+    channel.on('broadcast', { event: 'request_presence' }, () => {
+        // Alguém pediu presença, eu respondo.
+        syncLocalPresence();
+    });
+
+    channel.on('broadcast', { event: 'game_start' }, () => {
+        startGameLocal();
+    });
+
+    channel.on('broadcast', { event: 'chat_message' }, ({ payload }) => {
+      // Jogadores mortos/infectados não ouvem rádio (ajuste conforme regra do jogo)
+      setMessages(prev => [...prev, payload]);
+    });
+
     channel.on('broadcast', { event: 'infection_attempt' }, ({ payload }) => {
         if (payload.targetId === MY_ID) {
             setIsZombie(true);
@@ -291,6 +317,7 @@ const App: React.FC = () => {
             setTimeout(() => setActionFeedback(null), 5000);
         }
     });
+
     channel.on('broadcast', { event: 'heal_attempt' }, ({ payload }) => {
         if (payload.targetId === MY_ID) {
             setIsZombie(false);
@@ -304,6 +331,7 @@ const App: React.FC = () => {
             setTimeout(() => setActionFeedback(null), 5000);
         }
     });
+
     channel.on('broadcast', { event: 'kill_attempt' }, ({ payload }) => {
         if (payload.targetId === MY_ID) {
             setIsDead(true);
@@ -315,10 +343,24 @@ const App: React.FC = () => {
             setTimeout(() => setActionFeedback(null), 5000);
         }
     });
-    channel.subscribe();
-    channelRef.current = channel;
-    return () => { channel.unsubscribe(); };
-  }, [roomCode, isZombie, isDead, syncLocalPresence]);
+
+    channel.subscribe((status) => {
+        if (status === 'SUBSCRIBED') {
+            channelRef.current = channel;
+            // Pede para quem já está na sala se identificar (PING)
+            channel.send({ type: 'broadcast', event: 'request_presence', payload: {} });
+            // Manda a própria presença (PONG)
+            syncLocalPresence();
+        }
+    });
+
+    return () => { 
+        if (channelRef.current) {
+            channelRef.current.unsubscribe();
+            channelRef.current = null;
+        }
+    };
+  }, [roomCode, syncLocalPresence, startGameLocal]);
 
   const handleTacticalAction = (event: string, targetId: string) => {
     const target = realSquad.find(m => m.id === targetId);
@@ -434,7 +476,10 @@ const App: React.FC = () => {
                         if (gameState === GameState.JOIN_ROOM) { setRoomCode(joiningCode); setGameState(GameState.SELECT_CLASS); }
                         else {
                           const found = Object.keys(CLASS_DATA).find(k => CLASS_DATA[k as PlayerClass].auth === authCode) as PlayerClass;
-                          if (found) { setPlayerClass(found); setGameState(GameState.LOBBY); syncLocalPresence({ name: playerName, pClass: found }); }
+                          if (found) { 
+                            setPlayerClass(found); 
+                            setGameState(GameState.LOBBY);
+                          }
                           else { alert("CHAVE INVÁLIDA"); setAuthCode(''); }
                         }
                     }} className="w-full py-6 btn-red text-white text-2xl font-header tracking-widest italic disabled:opacity-20 rounded-sm" disabled={gameState === GameState.JOIN_ROOM ? joiningCode.length < 4 : (authCode.length < 8 || !playerName)}>
@@ -445,7 +490,6 @@ const App: React.FC = () => {
                     setPlayerClass('DEFAULT'); 
                     if (gameState === GameState.JOIN_ROOM) setRoomCode(joiningCode);
                     setGameState(GameState.LOBBY); 
-                    syncLocalPresence({ name: playerName, pClass: 'DEFAULT' }); 
                   }} className="w-full py-4 btn-outline text-white text-xl font-header tracking-widest italic rounded-sm opacity-60">SEM CLASSE</button>
                   <button onClick={handleGoBack} className="w-full py-4 btn-outline text-white text-xl font-header tracking-widest italic rounded-sm opacity-60">VOLTAR</button>
                 </div>
@@ -462,12 +506,14 @@ const App: React.FC = () => {
                 {realSquad.map(m => (
                   <div key={m.id} className="p-4 bg-[#050505] border border-[#1a1a1a] flex justify-between items-center rounded-sm">
                     <span className="text-xl font-header uppercase italic tracking-widest">{m.name}</span>
-                    <span className="text-[9px] font-mono text-zinc-500 uppercase">{CLASS_DATA[m.pClass].name}</span>
+                    <span className={`text-[9px] font-mono uppercase ${m.id === MY_ID ? 'text-[#b91c1c]' : 'text-zinc-500'}`}>
+                        {CLASS_DATA[m.pClass].name} {m.id === MY_ID ? '(VOCÊ)' : ''}
+                    </span>
                   </div>
                 ))}
              </div>
              <div className="space-y-3">
-                <button onClick={startGameLocal} className="w-full py-8 btn-red text-white text-4xl font-header tracking-widest italic rounded-sm">INICIAR MISSÃO</button>
+                <button onClick={broadcastStartGame} className="w-full py-8 btn-red text-white text-4xl font-header tracking-widest italic rounded-sm">INICIAR MISSÃO</button>
                 <button onClick={() => setGameState(GameState.SELECT_CLASS)} className="w-full py-4 btn-outline text-white text-xl font-header tracking-widest italic rounded-sm opacity-60">VOLTAR PARA CLASSES</button>
              </div>
           </div>
@@ -629,7 +675,7 @@ const App: React.FC = () => {
       <Chat 
         messages={messages} 
         onSendMessage={(text) => addMessage({ sender: playerName, text, type: 'TEXT' })} 
-        isOpen={isChatOpen && !isZombie && !isDead} 
+        isOpen={isChatOpen} 
         onClose={() => setIsChatOpen(false)} 
         playerName={playerName} 
       />
