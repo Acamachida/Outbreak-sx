@@ -85,6 +85,7 @@ const App: React.FC = () => {
   const [timeLeft, setTimeLeft] = useState(GAME_TIME_LIMIT);
   const [isTimerActive, setIsTimerActive] = useState(false);
   const [currentTaskIndex, setCurrentTaskIndex] = useState(0);
+  const [taskAttempt, setTaskAttempt] = useState(0); // Adicionado para forçar re-render do TaskRenderer
   const [tasks, setTasks] = useState<Task[]>([]);
   const [finalEvaluation, setFinalEvaluation] = useState<{title: string, msg: string, success: boolean}>({title: '', msg: '', success: false});
   const [showReceipt, setShowReceipt] = useState(false);
@@ -245,6 +246,7 @@ const App: React.FC = () => {
     }));
     setTasks(initialTasks);
     setCurrentTaskIndex(0);
+    setTaskAttempt(0);
     setTimeLeft(GAME_TIME_LIMIT);
     setIsTimerActive(false); 
     setGameState(GameState.PLAYING);
@@ -276,7 +278,6 @@ const App: React.FC = () => {
       timerRef.current = setInterval(() => {
         setTimeLeft(prev => { 
           if (prev <= 1) { 
-            setIsTimerActive(false);
             return 0; 
           } 
           return prev - 1; 
@@ -290,12 +291,15 @@ const App: React.FC = () => {
 
   useEffect(() => {
      if (timeLeft === 0 && gameState === GameState.PLAYING && isTimerActive) {
-        setActionFeedback("TERMINAL REINICIANDO EM 3s...");
+        setIsTimerActive(false);
+        setActionFeedback("ERRO DE SINCRONIA: SINAL PERDIDO.");
+        
+        // Pequeno atraso para o jogador ver a mensagem antes de voltar ao Keypad
         setTimeout(() => {
            setTimeLeft(GAME_TIME_LIMIT);
-           setIsTimerActive(false);
+           setTaskAttempt(prev => prev + 1); // Força re-render do TaskRenderer
            setActionFeedback(null);
-        }, 3000);
+        }, 1500);
      }
   }, [timeLeft, gameState, isTimerActive]);
 
@@ -346,7 +350,6 @@ const App: React.FC = () => {
     return () => { if (channelRef.current) channelRef.current.unsubscribe(); };
   }, [roomCode, syncLocalPresence, startGameLocal]);
 
-  // LOGICA DE FINAIS DINÂMICOS COM MENSAGENS POR FACÇÃO
   useEffect(() => {
     if (gameState !== GameState.PLAYING) return;
     
@@ -355,7 +358,6 @@ const App: React.FC = () => {
     const primordial = realSquad.find(m => m.pClass === 'ZUMBI_PRIMORDIAL');
     const medico = realSquad.find(m => m.pClass === 'MEDICO');
     
-    // CENÁRIO: VITÓRIA DA HORDA (TODOS HUMANOS INFECTADOS)
     if (aliveHumans.length === 0 && potentialHumans.length > 0) {
       if (isZombie) {
         setFinalEvaluation({
@@ -374,7 +376,6 @@ const App: React.FC = () => {
       return;
     }
 
-    // CENÁRIO: VITÓRIA DOS HUMANOS (TASKS COMPLETAS)
     const allHumansFinished = potentialHumans.length > 0 && potentialHumans.every(s => s.tasksCompleted >= 4);
     if (allHumansFinished) {
       if (isZombie) {
@@ -542,6 +543,7 @@ const App: React.FC = () => {
                       setTimeLeft(GAME_TIME_LIMIT); 
                       const nextCount = currentTaskIndex + 1;
                       setCurrentTaskIndex(nextCount);
+                      setTaskAttempt(0);
                       syncLocalPresence({ tasksCompleted: nextCount });
                     }} 
                     onToggleChat={()=>setIsChatOpen(true)}
@@ -549,7 +551,7 @@ const App: React.FC = () => {
                   />
                 ) : (
                   <TaskRenderer 
-                    key={currentTaskIndex} 
+                    key={`${currentTaskIndex}-${taskAttempt}`} // Key composta forçará reset ao expirar tempo
                     task={tasks[currentTaskIndex]} 
                     onUnlock={() => setIsTimerActive(true)} 
                     onComplete={() => { setIsTimerActive(false); setShowReceipt(true); }} 
